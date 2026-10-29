@@ -31,6 +31,11 @@
     # Also include remote-tracking branches (e.g. origin/feature-x).
     IncludeRemote = $true
 
+    # Only include a remote-tracking branch when no local branch with the same name
+    # exists (origin/feature-x is skipped if feature-x exists locally), so a branch
+    # is never listed twice. Implies IncludeRemote.
+    RemoteNotLocal = $false
+
     # Include merge commits (hidden by default).
     IncludeMerges = $false
 
@@ -43,11 +48,11 @@
     OutputDir = 'reports'
     # OutputDir = '%USERPROFILE%\Documents\GitReports'
 
-    # Do not write an HTML report; only print the list to the console.
-    NoHtml = $false
+    # Write an HTML report. Use $false to only print the list to the console.
+    Html = $true
 
-    # Do not open the HTML report in the default browser after writing it.
-    NoOpen = $false
+    # Open the HTML report in the default browser after writing it.
+    Open = $true
 
     # Do not print the list to the console (only write the HTML report).
     Quiet  = $false

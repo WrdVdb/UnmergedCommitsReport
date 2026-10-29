@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
     Lists commits that are not in a base branch (default: main), grouped per branch.
-    Also writes the result to a standalone HTML file (unless -NoHtml is used).
+    Also writes the result to a standalone HTML file and opens it in the browser
+    (turn off with -Html:$false and -Open:$false).
 
 .DESCRIPTION
     Defaults can be set in a config file, UnmergedCommitsReport.config.psd1, next to this
@@ -25,6 +26,12 @@
 .PARAMETER IncludeRemote
     Also include remote-tracking branches (e.g. origin/feature-x).
 
+.PARAMETER RemoteNotLocal
+    Also include remote-tracking branches, but only those that do not exist locally.
+    origin/feature-x is skipped when a local branch feature-x exists, so a branch is
+    never listed twice. Implies -IncludeRemote. Note that commits that only exist on
+    the remote side of a branch that also exists locally are not shown.
+
 .PARAMETER IncludeMerges
     Include merge commits. By default they are hidden.
 
@@ -37,12 +44,12 @@
     where <repo> is the repository name from the git remote and <base> the base branch,
     both in lowercase with dots, slashes and other special characters replaced by dashes.
 
-.PARAMETER NoHtml
-    Do not write an HTML report; only print the list to the console.
+.PARAMETER Html
+    Write an HTML report. Default: on. Use -Html:$false to only print the list to the console.
 
-.PARAMETER NoOpen
-    Do not open the HTML report in the default browser after it is written.
-    By default the report is opened.
+.PARAMETER Open
+    Open the HTML report in the default browser after it is written. Default: on.
+    Use -Open:$false to skip this.
 
 .PARAMETER Quiet
     Do not print the list to the console (only write the HTML report).
@@ -81,7 +88,8 @@
     Reports on the repository in the current directory.
 
 .EXAMPLE
-    .\UnmergedCommitsReport.ps1 -NoHtml
+    .\UnmergedCommitsReport.ps1 -Html:$false
+    Only prints the list to the console.
 
 .EXAMPLE
     .\UnmergedCommitsReport.ps1 -ConfigPath C:\reports\team-a.config.psd1
@@ -90,7 +98,7 @@
     .\UnmergedCommitsReport.ps1 -Branch feature/login, 'release/*'
 
 .EXAMPLE
-    .\UnmergedCommitsReport.ps1 -NoOpen
+    .\UnmergedCommitsReport.ps1 -Open:$false
     Writes the report but does not open it in the browser.
 
 .EXAMPLE
@@ -105,11 +113,12 @@ param(
     [string]$Base = 'main',
     [string[]]$Branch,
     [switch]$IncludeRemote,
+    [switch]$RemoteNotLocal,
     [switch]$IncludeMerges,
     [switch]$Reverse,
     [string]$HtmlPath,
-    [switch]$NoHtml,
-    [switch]$NoOpen,
+    [switch]$Html = $true,
+    [switch]$Open = $true,
     [switch]$Quiet,
     [string]$WorkItemUrl,
     [string]$CommitUrl,
@@ -145,8 +154,8 @@ if (Test-Path -LiteralPath $configFile -PathType Leaf) {
         RepoPath      = 'path';   OutputDir     = 'path'
         Base          = 'string'; WorkItemUrl   = 'string'; CommitUrl = 'string'
         Branch        = 'list'
-        IncludeRemote = 'switch'; IncludeMerges = 'switch'; Reverse   = 'switch'
-        NoHtml        = 'switch'; NoOpen        = 'switch'; Quiet     = 'switch'
+        IncludeRemote = 'switch'; RemoteNotLocal = 'switch'; IncludeMerges = 'switch'; Reverse = 'switch'
+        Html          = 'switch'; Open          = 'switch'; Quiet     = 'switch'
     }
 
     foreach ($key in @($config.Keys)) {
@@ -155,7 +164,7 @@ if (Test-Path -LiteralPath $configFile -PathType Leaf) {
             continue
         }
         if ($PSBoundParameters.ContainsKey($key)) { continue }   # the command line wins
-        if ($key -eq 'NoHtml' -and $PSBoundParameters.ContainsKey('HtmlPath')) { continue }
+        if ($key -eq 'Html' -and $PSBoundParameters.ContainsKey('HtmlPath')) { continue }
 
         $value = $config[$key]
         $kind  = $settingKinds[$key]
@@ -187,8 +196,8 @@ if (Test-Path -LiteralPath $configFile -PathType Leaf) {
 
 $Branch = @($Branch | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
-if ($NoHtml -and $HtmlPath) {
-    Write-Error '-NoHtml cannot be combined with -HtmlPath.'
+if (-not $Html -and $HtmlPath) {
+    Write-Error '-Html:$false cannot be combined with -HtmlPath.'
     exit 1
 }
 
@@ -246,7 +255,7 @@ $repoName       = if ($remoteRepoName) { $remoteRepoName }
                   elseif ($repoRoot)   { Split-Path $repoRoot -Leaf }
                   else                 { 'repository' }
 
-if (-not $NoHtml -and -not $HtmlPath) {
+if ($Html -and -not $HtmlPath) {
     $outDir    = if ($OutputDir) { $OutputDir } else { $scriptDir }
     $fileRepo  = (ConvertTo-FileNamePart $repoName)
     $fileBase  = (ConvertTo-FileNamePart $Base)
@@ -257,7 +266,15 @@ if (-not $NoHtml -and -not $HtmlPath) {
 
 # --- Find branches that contain commits not in $Base -----------------------
 $namespaces = @('refs/heads')
-if ($IncludeRemote) { $namespaces += 'refs/remotes' }
+if ($IncludeRemote -or $RemoteNotLocal) { $namespaces += 'refs/remotes' }
+
+# With -RemoteNotLocal: names of all local branches (merged or not), so that a remote branch
+# is only listed when there is no local branch with the same name.
+$localBranchNames = New-Object 'System.Collections.Generic.HashSet[string]'
+if ($RemoteNotLocal) {
+    Invoke-Git for-each-ref --format='%(refname)' refs/heads |
+        ForEach-Object { [void]$localBranchNames.Add(($_ -replace '^refs/heads/', '')) }
+}
 
 $branches = @(
     Invoke-Git for-each-ref --no-merged $Base --format='%(refname)' @namespaces |
@@ -269,6 +286,7 @@ $branches = @(
                 ShortName = $_ -replace '^refs/(heads/|remotes/[^/]+/)', ''
             }
         } |
+        Where-Object { -not ($RemoteNotLocal -and $_.Ref -like 'refs/remotes/*' -and $localBranchNames.Contains($_.ShortName)) } |
         Sort-Object Name
 )
 
@@ -384,7 +402,8 @@ if ($HtmlPath) {
 
     $options = @()
     if ($Branch.Count -gt 0) { $options += 'branches: ' + ($Branch -join ', ') }
-    if ($IncludeRemote) { $options += 'remote branches included' }
+    if ($RemoteNotLocal)     { $options += 'remote branches included (only those without a local branch)' }
+    elseif ($IncludeRemote)  { $options += 'remote branches included' }
     if ($IncludeMerges) { $options += 'merge commits included' } else { $options += 'merge commits hidden' }
     if ($Reverse)       { $options += 'oldest first' }
 
@@ -470,7 +489,7 @@ a:hover { text-decoration: underline; }
     [System.IO.File]::WriteAllText($fullPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
     Write-Host "HTML report written to $fullPath" -ForegroundColor Green
 
-    if (-not $NoOpen) {
+    if ($Open) {
         try { Invoke-Item -LiteralPath $fullPath -ErrorAction Stop }
         catch { Write-Warning "Could not open the report in the browser: $($_.Exception.Message)" }
     }

@@ -31,11 +31,12 @@ Show the oldest commit first within each branch.
 Where to write the HTML report (a relative path is relative to the current directory).
 Default: <repo>-<base>-unmerged-commits-yyyy-MM-dd.html in the output folder (see -OutputDir), where <repo> is the repository name from the git remote and <base> the base branch, both in lowercase with dots, slashes and other special characters replaced by dashes.
 
-### NoHtml
-Do not write an HTML report; only print the list to the console.
+### Html
+Write an HTML report; only print the list to the console.
+By default the html is generated
 
-### NoOpen
-Do not open the HTML report in the default browser after it is written.
+### Open
+Open the HTML report in the default browser after it is written.
 By default the report is opened.
 
 ### Quiet
